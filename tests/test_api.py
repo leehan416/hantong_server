@@ -81,6 +81,16 @@ class AuthAndRelayTests(ApiTestCase):
         self.assertNotIn(b"124", data)
         self.assertNotIn(b"a@gmail.com", data)
 
+    async def test_pubsub_accepts_numeric_history_id(self):
+        token = await self.login()
+        body = envelope("m1", {"emailAddress": "a@gmail.com", "historyId": 123})
+        self.assertEqual((await self.push(body))[0], 204)
+        headers = {"authorization": "Bearer " + token}
+        _, _, data, _ = await request(
+            self.app, "GET", API + "/events", headers=headers, disconnect_after=2
+        )
+        self.assertIn(b'"historyId":"123"', data)
+
     async def test_pubsub_rejects_bad_subscription_base64_and_history(self):
         bad_base64 = envelope("m", {})
         bad_base64["message"]["data"] = "%%%"
@@ -88,6 +98,7 @@ class AuthAndRelayTests(ApiTestCase):
             envelope("m", {}, subscription="wrong"),
             bad_base64,
             envelope("m", {"emailAddress": "a@gmail.com", "historyId": "0"}),
+            envelope("m", {"emailAddress": "a@gmail.com", "historyId": True}),
         ):
             status, _, data, _ = await self.push(body)
             self.assertEqual(status, 400)

@@ -1,4 +1,6 @@
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Pub/Sub and Gmail add fields over time; unknown ones are ignored, not rejected.
 EXTERNAL_PAYLOAD_CONFIG = ConfigDict(frozen=True, extra="ignore", strict=True)
@@ -23,3 +25,11 @@ class GmailNotification(BaseModel):
 
     email_address: str = Field(alias="emailAddress", max_length=320)
     history_id: str = Field(alias="historyId", pattern=r"^[1-9][0-9]*$")
+
+    @field_validator("history_id", mode="before")
+    @classmethod
+    def history_id_as_text(cls, value: Any) -> Any:
+        # Gmail sends historyId as a JSON number, though its docs show a string.
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+        return value
