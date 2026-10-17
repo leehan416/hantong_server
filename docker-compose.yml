@@ -16,6 +16,8 @@ services:
       PUBSUB_SERVICE_ACCOUNT_EMAIL: ${PUBSUB_SERVICE_ACCOUNT_EMAIL:-}
       PUBSUB_SUBSCRIPTION: ${PUBSUB_SUBSCRIPTION:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # uvicorn trusts X-Forwarded-For only from these peers; the backend is reachable only on this network.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-10.10.60.0/24}
     init: true
     restart: unless-stopped
     read_only: true
