@@ -1,0 +1,37 @@
+services:
+  backend:
+    build:
+      context: .
+    image: hantong-server:dev
+    expose:
+      - "8000"
+    networks:
+      proxy:
+        aliases:
+          - hantong-backend
+        ipv4_address: 10.10.60.20
+    environment:
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      PUBSUB_AUDIENCE: ${PUBSUB_AUDIENCE:-}
+      PUBSUB_SERVICE_ACCOUNT_EMAIL: ${PUBSUB_SERVICE_ACCOUNT_EMAIL:-}
+      PUBSUB_SUBSCRIPTION: ${PUBSUB_SUBSCRIPTION:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  proxy:
+    driver: bridge
+    name: ${HANTONG_PROXY_NETWORK:-hantong-proxy}
+    ipam:
+      config:
+        - subnet: 10.10.60.0/24

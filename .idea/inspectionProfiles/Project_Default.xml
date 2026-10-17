@@ -1,0 +1,26 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="fastapi" />
+          <option value="jinja2" />
+          <option value="paho-mqtt" />
+          <option value="pydantic-settings" />
+          <option value="redis" />
+          <option value="uvicorn" />
+          <option value="pydantic" />
+          <option value="myapplication" />
+        </list>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredIdentifiers">
+        <list>
+          <option value="app.utils.jwt.token_storage.sequora_config" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>

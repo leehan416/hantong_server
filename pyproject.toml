@@ -1,0 +1,56 @@
+[project]
+name = "hantong-server"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.143.2",
+    "google-auth[requests]",
+    "pydantic-settings>=2.16.0",
+    "typing-extensions>=4.16.0",
+    "uvicorn>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# Keep Optional[T] and `class X(str, Enum)`.
+ignore = ["UP042", "UP045"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["app"]
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["google.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.importlinter]
+root_packages = ["app"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "services and ports never import the web framework or a concrete adapter"
+type = "forbidden"
+source_modules = [
+    "app.auth.service",
+    "app.auth.ports",
+    "app.relay.service",
+    "app.gmail.service",
+]
+forbidden_modules = ["fastapi", "starlette", "google", "app.auth.adapters"]
