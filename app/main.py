@@ -16,6 +16,7 @@ from app.core.rate_limit import SlidingLimit
 from app.core.settings import Settings
 from app.core.settings import settings as default_settings
 from app.gmail.service import GmailPushService
+from app.relay.adapters.sqlite_refresh_store import SqliteRefreshStore
 from app.relay.service import RelayService
 
 
@@ -27,7 +28,10 @@ def create_app(
     """Assembly point: the only place that picks concrete adapters."""
     if not identity_verifier:
         identity_verifier = GoogleIdentityTokenVerifier()
-    relay = RelayService(clock)
+    refresh_store = (
+        SqliteRefreshStore(settings.REFRESH_DB_PATH) if settings.REFRESH_DB_PATH else None
+    )
+    relay = RelayService(clock, refresh_store)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

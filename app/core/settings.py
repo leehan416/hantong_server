@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     PUBSUB_SERVICE_ACCOUNT_EMAIL: Optional[str] = None
     PUBSUB_SUBSCRIPTION: Optional[str] = None
     LOG_LEVEL: str = "INFO"
+    # SQLite file for refresh grants; unset keeps them in memory only (lost on restart).
+    REFRESH_DB_PATH: Optional[str] = None
 
     @property
     def configured(self) -> bool:

@@ -6,6 +6,7 @@ from typing import Optional
 
 from app.auth.exceptions import CapacityExceededError, InvalidCredentialsError
 from app.relay.exceptions import StreamActiveError
+from app.relay.ports import RefreshStore, StoredGrant, StoredSpent
 from app.relay.schemas import IssuedSession
 
 
@@ -59,8 +60,13 @@ class RelayService:
     MAX_DEDUP_ENTRIES = 10000
     MAX_REFRESH_GRANTS = 10000
 
-    def __init__(self, clock: Callable[[], float]) -> None:
+    def __init__(
+        self,
+        clock: Callable[[], float],
+        refresh_store: Optional[RefreshStore] = None,
+    ) -> None:
         self.clock = clock
+        self.refresh_store = refresh_store
         self.challenges: dict[str, float] = {}
         self.sessions: dict[str, RelaySession] = {}
         self.by_installation: dict[tuple[str, str], str] = {}
@@ -69,6 +75,15 @@ class RelayService:
         self.refresh_by_installation: dict[tuple[str, str], str] = {}
         # Rotated-out refresh digests, kept until they would have expired, to detect replay.
         self.spent_refresh: dict[str, tuple[tuple[str, str], float]] = {}
+        if refresh_store:
+            grants, spent = refresh_store.load()
+            for g in grants:
+                self.refresh_grants[g.digest] = RefreshGrant(
+                    g.subject, g.email, g.installation_id, g.expires_at
+                )
+                self.refresh_by_installation[(g.subject, g.installation_id)] = g.digest
+            for sp in spent:
+                self.spent_refresh[sp.digest] = ((sp.subject, sp.installation_id), sp.expires_at)
 
     def create_challenge(self) -> str:
         self._clean()
@@ -139,6 +154,7 @@ class RelayService:
         old_refresh = self.refresh_by_installation.pop(installation, None)
         if old_refresh:
             self.refresh_grants.pop(old_refresh, None)
+            self._persist_delete(old_refresh)
         if len(self.refresh_grants) >= self.MAX_REFRESH_GRANTS:
             raise CapacityExceededError
         now = self.clock()
@@ -148,10 +164,13 @@ class RelayService:
         self.by_installation[installation] = digest
         refresh_token = secrets.token_urlsafe(32)
         refresh_digest = digest_of(refresh_token)
-        self.refresh_grants[refresh_digest] = RefreshGrant(
-            subject, email, installation_id, now + self.REFRESH_TTL_SECONDS
-        )
+        grant = RefreshGrant(subject, email, installation_id, now + self.REFRESH_TTL_SECONDS)
+        self.refresh_grants[refresh_digest] = grant
         self.refresh_by_installation[installation] = refresh_digest
+        if self.refresh_store:
+            self.refresh_store.put_grant(
+                StoredGrant(refresh_digest, subject, email, installation_id, grant.expires_at)
+            )
         return IssuedSession(
             access_token=token, expires_in=int(expires_at - now), refresh_token=refresh_token
         )
@@ -169,6 +188,7 @@ class RelayService:
         self._revoke_digest(session.digest)
 
     def close(self) -> None:
+        """Shutdown: end live sessions; refresh grants stay in the store for the next start."""
         for digest in list(self.sessions):
             self._revoke_digest(digest)
         self.refresh_grants.clear()
@@ -248,6 +268,8 @@ class RelayService:
         for digest, session in list(self.sessions.items()):
             if session.expires_at <= now:
                 self._revoke_digest(digest)
+        if self.refresh_store:
+            self.refresh_store.delete_expired(now)
 
     def _drop_refresh(self, installation: tuple[str, str]) -> None:
         """Retire the installation's live refresh digest, remembering it so a replay is caught."""
@@ -258,10 +280,19 @@ class RelayService:
         if not grant:
             return
         if len(self.spent_refresh) >= self.MAX_REFRESH_GRANTS:
-            del self.spent_refresh[
-                min(self.spent_refresh, key=lambda key: self.spent_refresh[key][1])
-            ]
+            oldest = min(self.spent_refresh, key=lambda key: self.spent_refresh[key][1])
+            del self.spent_refresh[oldest]
+            self._persist_delete(oldest)
         self.spent_refresh[digest] = (installation, grant.expires_at)
+        if self.refresh_store:
+            self.refresh_store.delete(digest)
+            self.refresh_store.put_spent(
+                StoredSpent(digest, installation[0], installation[1], grant.expires_at)
+            )
+
+    def _persist_delete(self, digest: str) -> None:
+        if self.refresh_store:
+            self.refresh_store.delete(digest)
 
     def _revoke_installation(self, installation: tuple[str, str]) -> None:
         self._drop_refresh(installation)

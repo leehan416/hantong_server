@@ -13,7 +13,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --no-cache
 
-RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser \
+    && mkdir /data && chown 10001:10001 /data
 
 COPY app ./app
 

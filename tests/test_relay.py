@@ -1,6 +1,9 @@
+import os
+import tempfile
 import unittest
 
 from app.auth.exceptions import CapacityExceededError, InvalidCredentialsError
+from app.relay.adapters.sqlite_refresh_store import SqliteRefreshStore
 from app.relay.service import RelayService
 from tests.fakes import INSTALLATION_ID
 
@@ -121,3 +124,53 @@ class RelayTests(unittest.TestCase):
         with self.assertRaises(InvalidCredentialsError):
             self.relay.authenticate(issued.access_token)
         self.relay.refresh(issued.refresh_token)
+
+
+class SqliteRefreshPersistenceTests(unittest.TestCase):
+    """Refresh grants must outlive a server restart; sessions deliberately do not."""
+
+    def setUp(self):
+        self.now = 1000.0
+        self.directory = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.directory.name, "relay.sqlite3")
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def restart(self):
+        return RelayService(lambda: self.now, SqliteRefreshStore(self.path))
+
+    def test_refresh_token_survives_a_restart_but_the_session_does_not(self):
+        relay = self.restart()
+        issued = relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        relay.close()
+        relay = self.restart()
+        with self.assertRaises(InvalidCredentialsError):
+            relay.authenticate(issued.access_token)
+        refreshed = relay.refresh(issued.refresh_token)
+        relay.publish("m1", "a@gmail.com", "123")
+        self.assertEqual(relay.authenticate(refreshed.access_token).queue.get_nowait(), "123")
+
+    def test_replay_detection_and_logout_survive_a_restart(self):
+        relay = self.restart()
+        issued = relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        rotated = relay.refresh(issued.refresh_token)
+        relay = self.restart()
+        with self.assertRaises(InvalidCredentialsError):
+            relay.refresh(issued.refresh_token)
+        with self.assertRaises(InvalidCredentialsError):
+            relay.refresh(rotated.refresh_token)
+        relay = self.restart()
+        again = relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        relay.revoke(relay.authenticate(again.access_token))
+        with self.assertRaises(InvalidCredentialsError):
+            self.restart().refresh(again.refresh_token)
+
+    def test_only_digests_are_stored_and_expired_grants_are_purged(self):
+        relay = self.restart()
+        issued = relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        with open(self.path, "rb") as file:
+            self.assertNotIn(issued.refresh_token.encode(), file.read())
+        self.now += RelayService.REFRESH_TTL_SECONDS
+        relay.create_challenge()  # any call runs the expiry sweep
+        self.assertEqual(SqliteRefreshStore(self.path).load(), ([], []))

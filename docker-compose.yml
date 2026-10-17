@@ -18,17 +18,24 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # uvicorn trusts X-Forwarded-For only from these peers; the backend is reachable only on this network.
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-10.10.60.0/24}
+      REFRESH_DB_PATH: ${REFRESH_DB_PATH:-/data/relay.sqlite3}
     init: true
     restart: unless-stopped
     read_only: true
     tmpfs:
       - /tmp
+    # Refresh grants survive restarts here; the rest of the filesystem stays read-only.
+    volumes:
+      - relay-data:/data
     stop_grace_period: 20s
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  relay-data:
 
 networks:
   proxy:

@@ -51,6 +51,7 @@ source_modules = [
     "app.auth.service",
     "app.auth.ports",
     "app.relay.service",
+    "app.relay.ports",
     "app.gmail.service",
 ]
-forbidden_modules = ["fastapi", "starlette", "google", "app.auth.adapters"]
+forbidden_modules = ["fastapi", "starlette", "google", "app.auth.adapters", "app.relay.adapters", "sqlite3"]
