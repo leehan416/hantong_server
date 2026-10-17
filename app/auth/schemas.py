@@ -68,3 +68,10 @@ class SessionResponse(BaseModel):
     access_token: str
     token_type: str = "Bearer"
     expires_in: int
+    refresh_token: str
+
+
+class RefreshRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    refresh_token: str = Field(min_length=1, max_length=256)

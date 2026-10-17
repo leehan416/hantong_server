@@ -6,3 +6,4 @@ class IssuedSession(BaseModel):
 
     access_token: str
     expires_in: int
+    refresh_token: str

@@ -161,6 +161,24 @@ class AuthAndRelayTests(ApiTestCase):
         self.assertEqual(status, 204)
         self.assertEqual((await request(self.app, "GET", API + "/events", headers=headers))[0], 401)
 
+    async def test_refresh_endpoint_rotates_tokens_and_rejects_reuse(self):
+        nonce = await self.challenge()
+        self.verifier.tokens["good"] = user_claims(nonce)
+        _, _, data, _ = await self.post_session("good", nonce)
+        refresh_token = json_body(data)["refresh_token"]
+        body = json.dumps({"refresh_token": refresh_token}).encode()
+        status, _, data, _ = await request(
+            self.app, "POST", API + "/auth/refresh", headers=JSON, body=body
+        )
+        self.assertEqual(status, 200)
+        refreshed = json_body(data)
+        self.assertEqual(refreshed["token_type"], "Bearer")
+        self.assertNotEqual(refreshed["refresh_token"], refresh_token)
+        status, _, data, _ = await request(
+            self.app, "POST", API + "/auth/refresh", headers=JSON, body=body
+        )
+        self.assertEqual((status, json_body(data)["code"]), (401, "AUTH_401"))
+
     async def test_lifespan_shutdown_closes_sessions(self):
         token = await self.login()
         session = self.app.state.relay.authenticate(token)

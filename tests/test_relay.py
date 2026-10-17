@@ -70,3 +70,54 @@ class RelayTests(unittest.TestCase):
             self.relay.create_session(
                 "s", "a@gmail.com", "123e4567-e89b-42d3-a456-426614174099", 2000
             )
+
+    def test_refresh_rotates_into_a_new_session_and_is_single_use(self):
+        issued = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 1100)
+        self.assertNotIn(issued.refresh_token, repr(list(self.relay.refresh_grants)))
+        self.now = 1200  # past the ID-token-bound session, inside the refresh lifetime
+        refreshed = self.relay.refresh(issued.refresh_token)
+        self.assertEqual(refreshed.expires_in, RelayService.SESSION_TTL_SECONDS)
+        self.assertNotEqual(refreshed.refresh_token, issued.refresh_token)
+        session = self.relay.authenticate(refreshed.access_token)
+        self.relay.publish("m1", "a@gmail.com", "123")
+        self.assertEqual(session.queue.get_nowait(), "123")
+
+    def test_replayed_refresh_revokes_the_installation(self):
+        # Reuse of a rotated credential means it leaked: end both the thief's and the owner's chain.
+        issued = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        rotated = self.relay.refresh(issued.refresh_token)
+        with self.assertRaises(InvalidCredentialsError):
+            self.relay.refresh(issued.refresh_token)
+        with self.assertRaises(InvalidCredentialsError):
+            self.relay.authenticate(rotated.access_token)
+        with self.assertRaises(InvalidCredentialsError):
+            self.relay.refresh(rotated.refresh_token)
+
+    def test_refresh_expires_and_unknown_tokens_are_rejected(self):
+        issued = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        with self.assertRaises(InvalidCredentialsError):
+            self.relay.refresh("unknown")
+        self.now += RelayService.REFRESH_TTL_SECONDS
+        with self.assertRaises(InvalidCredentialsError):
+            self.relay.refresh(issued.refresh_token)
+
+    def test_logout_revokes_the_refresh_credential(self):
+        issued = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        self.relay.revoke(self.relay.authenticate(issued.access_token))
+        with self.assertRaises(InvalidCredentialsError):
+            self.relay.refresh(issued.refresh_token)
+
+    def test_fresh_login_supersedes_old_refresh_without_revoking_the_new_session(self):
+        old = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        new = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        with self.assertRaises(InvalidCredentialsError):
+            self.relay.refresh(old.refresh_token)
+        self.relay.authenticate(new.access_token)
+        self.relay.refresh(new.refresh_token)
+
+    def test_session_expiry_keeps_the_refresh_credential(self):
+        issued = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 1100)
+        self.now = 1101
+        with self.assertRaises(InvalidCredentialsError):
+            self.relay.authenticate(issued.access_token)
+        self.relay.refresh(issued.refresh_token)
