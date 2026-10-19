@@ -110,6 +110,11 @@ class AuthAndRelayTests(ApiTestCase):
         self.assertEqual(status, 401)
         self.assertEqual(json_body(data)["code"], "AUTH_401")
 
+    async def test_pubsub_signer_email_comparison_is_case_insensitive(self):
+        self.verifier.tokens[PUSH_TOKEN] = push_claims(email="PUSH@PROJECT.IAM.GSERVICEACCOUNT.COM")
+        body = envelope("case", {"emailAddress": "a@gmail.com", "historyId": "1"})
+        self.assertEqual((await self.push(body))[0], 204)
+
     async def test_long_google_jwt_is_accepted_for_push(self):
         jwt = "a." + "b" * 1200 + ".c"
         self.verifier.tokens[jwt] = push_claims()
@@ -315,3 +320,15 @@ class ErrorContractTests(ApiTestCase):
             json_body(data), {"code": "COMMON_500", "message": "Internal Server Error"}
         )
         self.assertNotIn(b"secret internals", data)
+
+
+class SlidingLimitTests(unittest.TestCase):
+    def test_new_ip_evicts_least_recently_active_bucket_when_full(self):
+        limiter = SlidingLimit(limit=2, window=60, capacity=2)
+        self.assertTrue(limiter.allow("ip-a", 1))
+        self.assertTrue(limiter.allow("ip-b", 2))
+        self.assertTrue(limiter.allow("ip-a", 3))
+        self.assertTrue(limiter.allow("ip-c", 4))
+        self.assertIn("ip-a", limiter.buckets)
+        self.assertNotIn("ip-b", limiter.buckets)
+        self.assertIn("ip-c", limiter.buckets)

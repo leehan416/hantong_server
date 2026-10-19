@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 
 class StoredGrant(NamedTuple):
@@ -8,6 +8,7 @@ class StoredGrant(NamedTuple):
     email: str
     installation_id: str
     expires_at: float
+    generation_id: Optional[str] = None
 
 
 class StoredSpent(NamedTuple):
@@ -15,6 +16,7 @@ class StoredSpent(NamedTuple):
     subject: str
     installation_id: str
     expires_at: float
+    generation_id: Optional[str] = None
 
 
 class RefreshStore(ABC):
@@ -34,6 +36,31 @@ class RefreshStore(ABC):
 
     @abstractmethod
     def put_spent(self, spent: StoredSpent) -> None:
+        pass
+
+    @abstractmethod
+    def rotate(
+        self,
+        old_digest: str,
+        spent: StoredSpent,
+        grant: StoredGrant,
+        evict_spent_digest: Optional[str] = None,
+    ) -> None:
+        """Atomically replace a live refresh grant with its spent marker and successor."""
+        pass
+
+    @abstractmethod
+    def replace_grant(
+        self, old_digest: str, grant: StoredGrant, subject: str, installation_id: str
+    ) -> None:
+        """Replace a login grant and clear replay markers for the prior installation generation."""
+        pass
+
+    @abstractmethod
+    def revoke_installation(
+        self, old_digest: Optional[str], subject: str, installation_id: str
+    ) -> None:
+        """Remove refresh state for a logged-out installation."""
         pass
 
     @abstractmethod

@@ -59,7 +59,10 @@ class AuthService:
         claims = await self.verifier.verify(token, audience)
         if not claims_valid(claims, audience, self.clock()):
             raise InvalidCredentialsError
-        if claims.email != self.settings.PUBSUB_SERVICE_ACCOUNT_EMAIL:
+        if (
+            not claims.email
+            or claims.email.lower() != str(self.settings.PUBSUB_SERVICE_ACCOUNT_EMAIL).lower()
+        ):
             raise InvalidCredentialsError
 
 

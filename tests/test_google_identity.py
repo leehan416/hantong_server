@@ -25,6 +25,10 @@ def fake_google_modules(transport_request, verify_oauth2_token):
     id_token.verify_oauth2_token = verify_oauth2_token
     auth = types.ModuleType("google.auth")
     auth.__path__ = []
+    exceptions = types.ModuleType("google.auth.exceptions")
+    exceptions.TransportError = type("TransportError", (Exception,), {})
+    exceptions.TimeoutError = type("TimeoutError", (Exception,), {})
+    exceptions.ResponseError = type("ResponseError", (Exception,), {})
     transport = types.ModuleType("google.auth.transport")
     transport.__path__ = []
     requests = types.ModuleType("google.auth.transport.requests")
@@ -32,6 +36,7 @@ def fake_google_modules(transport_request, verify_oauth2_token):
     oauth2.id_token = id_token
     transport.requests = requests
     auth.transport = transport
+    auth.exceptions = exceptions
     google.oauth2 = oauth2
     google.auth = auth
     return {
@@ -39,6 +44,7 @@ def fake_google_modules(transport_request, verify_oauth2_token):
         "google.oauth2": oauth2,
         "google.oauth2.id_token": id_token,
         "google.auth": auth,
+        "google.auth.exceptions": exceptions,
         "google.auth.transport": transport,
         "google.auth.transport.requests": requests,
     }
@@ -90,6 +96,18 @@ class GoogleTokenFunctionTests(unittest.TestCase):
 
         with patch.dict(sys.modules, fake_google_modules(lambda: None, reject)):
             with self.assertRaises(InvalidCredentialsError):
+                verify_google_token("token", "aud", CertificateCache())
+
+    def test_google_transport_failure_is_unavailable(self):
+        modules = fake_google_modules(lambda: None, lambda *args, **kwargs: None)
+        transport_error = modules["google.auth.exceptions"].TransportError("offline")
+
+        def unavailable(token, request, audience):
+            raise transport_error
+
+        modules["google.oauth2.id_token"].verify_oauth2_token = unavailable
+        with patch.dict(sys.modules, modules):
+            with self.assertRaises(IdentityVerifierUnavailableError):
                 verify_google_token("token", "aud", CertificateCache())
 
 

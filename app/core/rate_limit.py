@@ -16,7 +16,10 @@ class SlidingLimit:
             if len(self.buckets) >= self.capacity:
                 self._evict_idle(now)
             if len(self.buckets) >= self.capacity:
-                return False
+                if not self.buckets:
+                    return False
+                oldest = min(self.buckets, key=lambda item: self.buckets[item][-1])
+                del self.buckets[oldest]
             bucket = deque()
             self.buckets[key] = bucket
         self._expire(bucket, now)

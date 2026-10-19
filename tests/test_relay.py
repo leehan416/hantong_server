@@ -1,10 +1,11 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 
 from app.auth.exceptions import CapacityExceededError, InvalidCredentialsError
 from app.relay.adapters.sqlite_refresh_store import SqliteRefreshStore
-from app.relay.service import RelayService
+from app.relay.service import RelayService, digest_of
 from tests.fakes import INSTALLATION_ID
 
 OTHER_INSTALLATION_ID = "123e4567-e89b-42d3-a456-426614174001"
@@ -74,6 +75,17 @@ class RelayTests(unittest.TestCase):
                 "s", "a@gmail.com", "123e4567-e89b-42d3-a456-426614174099", 2000
             )
 
+    def test_per_subject_refresh_grant_limit_is_eight(self):
+        self.relay.MAX_SESSIONS_PER_SUBJECT = 100
+        for index in range(RelayService.MAX_REFRESH_GRANTS_PER_SUBJECT):
+            installation_id = f"123e4567-e89b-42d3-a456-4266141740{index:02x}"
+            self.relay.create_session("s", "a@gmail.com", installation_id, 2000)
+
+        with self.assertRaises(CapacityExceededError):
+            self.relay.create_session(
+                "s", "a@gmail.com", "123e4567-e89b-42d3-a456-426614174099", 2000
+            )
+
     def test_refresh_rotates_into_a_new_session_and_is_single_use(self):
         issued = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 1100)
         self.assertNotIn(issued.refresh_token, repr(list(self.relay.refresh_grants)))
@@ -95,6 +107,39 @@ class RelayTests(unittest.TestCase):
             self.relay.authenticate(rotated.access_token)
         with self.assertRaises(InvalidCredentialsError):
             self.relay.refresh(rotated.refresh_token)
+
+    def test_capacity_failure_does_not_consume_refresh_or_revoke_session(self):
+        issued = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        other = self.relay.create_session("other", "b@gmail.com", OTHER_INSTALLATION_ID, 2000)
+        self.relay.MAX_SESSIONS = 1
+
+        with self.assertRaises(CapacityExceededError):
+            self.relay.refresh(issued.refresh_token)
+
+        self.relay.authenticate(issued.access_token)
+        self.relay.revoke(self.relay.authenticate(other.access_token))
+        self.assertNotEqual(
+            self.relay.refresh(issued.refresh_token).refresh_token, issued.refresh_token
+        )
+
+    def test_old_rotated_refresh_after_logout_and_login_does_not_revoke_new_session(self):
+        issued = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        rotated = self.relay.refresh(issued.refresh_token)
+        self.relay.revoke(self.relay.authenticate(rotated.access_token))
+        current = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+
+        with self.assertRaises(InvalidCredentialsError):
+            self.relay.refresh(rotated.refresh_token)
+        self.relay.authenticate(current.access_token)
+
+    def test_old_rotated_refresh_after_fresh_login_does_not_revoke_new_session(self):
+        issued = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        self.relay.refresh(issued.refresh_token)
+        current = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+
+        with self.assertRaises(InvalidCredentialsError):
+            self.relay.refresh(issued.refresh_token)
+        self.relay.authenticate(current.access_token)
 
     def test_refresh_expires_and_unknown_tokens_are_rejected(self):
         issued = self.relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
@@ -165,6 +210,53 @@ class SqliteRefreshPersistenceTests(unittest.TestCase):
         relay.revoke(relay.authenticate(again.access_token))
         with self.assertRaises(InvalidCredentialsError):
             self.restart().refresh(again.refresh_token)
+
+    def test_failed_rotation_write_rolls_back_all_refresh_state(self):
+        relay = self.restart()
+        issued = relay.create_session("s", "a@gmail.com", INSTALLATION_ID, 2000)
+        old_digest = relay.refresh_by_installation[("s", INSTALLATION_ID)]
+        store = relay.refresh_store
+        store.db.execute(
+            "CREATE TRIGGER reject_successor BEFORE INSERT ON refresh_grants "
+            f"WHEN NEW.digest != '{old_digest}' BEGIN SELECT RAISE(ABORT, 'blocked'); END"
+        )
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            relay.refresh(issued.refresh_token)
+
+        relay.authenticate(issued.access_token)
+        grants, spent = store.load()
+        self.assertEqual([grant.digest for grant in grants], [old_digest])
+        self.assertEqual(spent, [])
+        store.db.execute("DROP TRIGGER reject_successor")
+        self.assertNotEqual(relay.refresh(issued.refresh_token).refresh_token, issued.refresh_token)
+
+    def test_legacy_spent_marker_cannot_revoke_a_new_generation(self):
+        db = sqlite3.connect(self.path)
+        db.execute(
+            "CREATE TABLE refresh_grants (digest TEXT PRIMARY KEY, subject TEXT NOT NULL,"
+            " email TEXT NOT NULL, installation_id TEXT NOT NULL, expires_at REAL NOT NULL)"
+        )
+        db.execute(
+            "CREATE TABLE spent_refresh (digest TEXT PRIMARY KEY, subject TEXT NOT NULL,"
+            " installation_id TEXT NOT NULL, expires_at REAL NOT NULL)"
+        )
+        db.execute(
+            "INSERT INTO refresh_grants VALUES (?, ?, ?, ?, ?)",
+            (digest_of("current"), "s", "a@gmail.com", INSTALLATION_ID, 2000),
+        )
+        db.execute(
+            "INSERT INTO spent_refresh VALUES (?, ?, ?, ?)",
+            (digest_of("legacy-stale"), "s", INSTALLATION_ID, 2000),
+        )
+        db.commit()
+        db.close()
+
+        relay = self.restart()
+        current = relay.refresh("current")
+        with self.assertRaises(InvalidCredentialsError):
+            relay.refresh("legacy-stale")
+        relay.authenticate(current.access_token)
 
     def test_only_digests_are_stored_and_expired_grants_are_purged(self):
         relay = self.restart()

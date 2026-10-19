@@ -83,6 +83,7 @@ class CachedBoundedRequest:
 
 def verify_google_token(token: str, audience: str, cache: CertificateCache) -> Mapping[str, Any]:
     try:
+        from google.auth import exceptions as google_auth_exceptions
         from google.auth.transport.requests import Request
         from google.oauth2 import id_token
     except ImportError:
@@ -90,6 +91,12 @@ def verify_google_token(token: str, audience: str, cache: CertificateCache) -> M
     try:
         request = CachedBoundedRequest(Request(), cache)
         return id_token.verify_oauth2_token(token, request, audience=audience)
+    except (
+        google_auth_exceptions.TransportError,
+        google_auth_exceptions.TimeoutError,
+        google_auth_exceptions.ResponseError,
+    ):
+        raise IdentityVerifierUnavailableError from None
     except Exception:
         raise InvalidCredentialsError from None
 
